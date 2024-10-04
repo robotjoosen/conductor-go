@@ -14,8 +14,11 @@ import (
 )
 
 const (
-	sqsEventPrefix       = "sqs"
-	conductorEventPrefix = "conductor"
+	sqsEventPrefix          = "sqs"
+	conductorEventPrefix    = "conductor"
+	natsEventPrefix         = "nats"
+	amqpQueueEventPrefix    = "amqp_queue"
+	amqpExchangeEventPrefix = "amqp_exchange"
 )
 
 // EventTask Task to publish Events to external queuing systems like SQS, NATS, AMQP etc.
@@ -37,6 +40,30 @@ func NewConductorEventTask(taskRefName string, eventName string) *EventTask {
 		taskRefName,
 		conductorEventPrefix,
 		eventName,
+	)
+}
+
+func NewNatsEventTask(taskRefName string, queueName string) *EventTask {
+	return newEventTask(
+		taskRefName,
+		natsEventPrefix,
+		queueName,
+	)
+}
+
+func NewAmqpQueueEventTask(taskRefName string, queueName string) *EventTask {
+	return newEventTask(
+		taskRefName,
+		amqpQueueEventPrefix,
+		queueName,
+	)
+}
+
+func NewAmqpExchangeEventTask(taskRefName string, queueName string) *EventTask {
+	return newEventTask(
+		taskRefName,
+		amqpExchangeEventPrefix,
+		queueName,
 	)
 }
 

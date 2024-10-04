@@ -195,6 +195,60 @@ func TestConductorEventTask(t *testing.T) {
 	}
 }
 
+func TestNatsEventTask(t *testing.T) {
+	workflow := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
+		Name("TEST_GO_WORKFLOW_EVENT_NATS").
+		Version(1).
+		Add(testdata.TestNatsEventTask)
+	err := testdata.ValidateWorkflowRegistration(workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = testdata.ValidateWorkflowDeletion(workflow)
+	if err != nil {
+		t.Fatal(
+			"Failed to delete workflow. Reason: ", err.Error(),
+		)
+	}
+}
+
+func TestAmqpQueueEventTask(t *testing.T) {
+	workflow := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
+		Name("TEST_GO_WORKFLOW_EVENT_AMQP_QUEUE").
+		Version(1).
+		Add(testdata.TestAmqpQueueEventTask)
+	err := testdata.ValidateWorkflowRegistration(workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = testdata.ValidateWorkflowDeletion(workflow)
+	if err != nil {
+		t.Fatal(
+			"Failed to delete workflow. Reason: ", err.Error(),
+		)
+	}
+}
+
+func TestAmqpExchangeEventTask(t *testing.T) {
+	workflow := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
+		Name("TEST_GO_WORKFLOW_EVENT_AMQP_EXCHANGE").
+		Version(1).
+		Add(testdata.TestAmqpExchangeEventTask)
+	err := testdata.ValidateWorkflowRegistration(workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = testdata.ValidateWorkflowDeletion(workflow)
+	if err != nil {
+		t.Fatal(
+			"Failed to delete workflow. Reason: ", err.Error(),
+		)
+	}
+}
+
 func TestKafkaPublishTask(t *testing.T) {
 	workflow := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
 		Name("TEST_GO_WORKFLOW_KAFKA_PUBLISH").

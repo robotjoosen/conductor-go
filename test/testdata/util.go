@@ -316,4 +316,19 @@ var (
 		"TEST_GO_TASK_EVENT_CONDUCTOR",
 		"EVENT_NAME",
 	)
+
+	TestNatsEventTask = workflow.NewNatsEventTask(
+		"TEST_GO_TASK_EVENT_NATS",
+		"EVENT_NAME",
+	)
+
+	TestAmqpQueueEventTask = workflow.NewAmqpQueueEventTask(
+		"TEST_GO_TASK_EVENT_AMQP_QUEUE",
+		"EVENT_NAME",
+	)
+
+	TestAmqpExchangeEventTask = workflow.NewAmqpExchangeEventTask(
+		"TEST_GO_TASK_EVENT_AMQP_EXCHANGE",
+		"EVENT_NAME",
+	)
 )
