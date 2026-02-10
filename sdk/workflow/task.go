@@ -46,12 +46,15 @@ const (
 	WAIT              TaskType = "WAIT"
 	HUMAN             TaskType = "HUMAN"
 	HTTP              TaskType = "HTTP"
+	HTTP_POLL         TaskType = "HTTP_POLL"
 	INLINE            TaskType = "INLINE"
 	UPDATE            TaskType = "UPDATE_TASK"
 	TERMINATE         TaskType = "TERMINATE"
 	KAFKA_PUBLISH     TaskType = "KAFKA_PUBLISH"
 	JSON_JQ_TRANSFORM TaskType = "JSON_JQ_TRANSFORM"
 	SET_VARIABLE      TaskType = "SET_VARIABLE"
+	GET_WORKFLOW      TaskType = "GET_WORKFLOW"
+	YIELD             TaskType = "YIELD"
 )
 
 type TaskInterface interface {
@@ -85,6 +88,8 @@ func (task *Task) toWorkflowTask() []model.WorkflowTask {
 			InputParameters:   inputParams,
 			Optional:          task.optional,
 			Type_:             string(task.taskType),
+			DecisionCases:     map[string][]model.WorkflowTask{},
+			DefaultCase:       []model.WorkflowTask{},
 		},
 	}
 }
@@ -113,12 +118,20 @@ func (task *Task) OutputRef(path string) string {
 
 // Input to the task.  See https://conductor.netflix.com/how-tos/Tasks/task-inputs.html for details
 func (task *Task) Input(key string, value interface{}) *Task {
+	if task.inputParameters == nil {
+		task.inputParameters = make(map[string]interface{})
+	}
+
 	task.inputParameters[key] = value
 	return task
 }
 
 // InputMap to the task.  See https://conductor.netflix.com/how-tos/Tasks/task-inputs.html for details
 func (task *Task) InputMap(inputMap map[string]interface{}) *Task {
+	if task.inputParameters == nil {
+		task.inputParameters = make(map[string]interface{})
+	}
+
 	for k, v := range inputMap {
 		task.inputParameters[k] = v
 	}

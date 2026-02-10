@@ -74,9 +74,8 @@ func NewKitchenSinkWorkflow(executor *executor.WorkflowExecutor) *workflow.Condu
 		"dynamic_fork",
 		workflow.NewSimpleTask("dynamic_fork_prep", "dynamic_fork_prep"),
 	)
-	setVariable := workflow.NewSetVariableTask("set_state").
-		Input("call_made", true).
-		Input("number", task.OutputRef("number"))
+
+	setVariable := NewSetStateVariableTask(task)
 
 	subWorkflow := workflow.NewSubWorkflowTask("sub_flow", "PopulationMinMax", 0)
 
@@ -108,6 +107,12 @@ func NewKitchenSinkWorkflow(executor *executor.WorkflowExecutor) *workflow.Condu
 	return workflow
 }
 
+func NewSetStateVariableTask(task *workflow.SimpleTask) *workflow.SetVariableTask {
+	return workflow.NewSetVariableTask("set_state").
+		Input("call_made", true).
+		Input("number", task.OutputRef("number"))
+}
+
 type WorkflowTask struct {
 	Name              string `json:"name"`
 	TaskReferenceName string `json:"taskReferenceName"`
@@ -115,7 +120,6 @@ type WorkflowTask struct {
 }
 
 func DynamicForkWorker(t *model.Task) (output interface{}, err error) {
-	taskResult := model.NewTaskResultFromTask(t)
 	tasks := []WorkflowTask{
 		{
 			Name:              "simple_task",
@@ -148,13 +152,10 @@ func DynamicForkWorker(t *model.Task) (output interface{}, err error) {
 		},
 	}
 
-	taskResult.OutputData = map[string]interface{}{
+	return map[string]interface{}{
 		"forkedTasks":       tasks,
 		"forkedTasksInputs": inputs,
-	}
-	taskResult.Status = model.CompletedTask
-	err = nil
-	return taskResult, err
+	}, nil
 }
 
 func GetWorkflowWithComplexSwitchTask() *workflow.ConductorWorkflow {

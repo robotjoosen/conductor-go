@@ -8,7 +8,7 @@ import (
 
 	"github.com/conductor-sdk/conductor-go/sdk/model"
 	"github.com/conductor-sdk/conductor-go/sdk/workflow"
-	"github.com/conductor-sdk/conductor-go/test/testdata"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,7 +17,7 @@ func TestRetrySettings(t *testing.T) {
 	simpleTask.RetryPolicy(2, workflow.FixedRetry, 10, 1)
 	simpleTask.Input("url", "${workflow.input.url}")
 	simpleTask.CacheConfig("${url}", 120)
-	wf := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
+	wf := workflow.NewConductorWorkflow(nil).
 		Name("workflow_with_task_retries").
 		Version(1).
 		Add(simpleTask)
@@ -41,7 +41,7 @@ func TestHttpTask(t *testing.T) {
 	httpTask.RetryPolicy(2, workflow.FixedRetry, 10, 1)
 	httpTask.Input("url", "${workflow.input.url}")
 	httpTask.CacheConfig("${url}", 120)
-	wf := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
+	wf := workflow.NewConductorWorkflow(nil).
 		Name("workflow_with_http_task_retries").
 		Version(1).
 		Add(httpTask)
@@ -56,13 +56,70 @@ func TestHttpTask(t *testing.T) {
 	fmt.Println(string(json))
 }
 
+func TestHttpPollTask(t *testing.T) {
+	input := workflow.HttpPollInput{
+		Method:              "GET",
+		Uri:                 "http://localhost:8081/api/hello/intermittent-failures?name=Http_poll_test",
+		Accept:              "application/json",
+		ContentType:         "application/json",
+		PollingInterval:     1,
+		PollingStrategy:     "FIXED",
+		TerminationCriteria: "(function(){ return $.output.body.length > 10;})();",
+		Encode:              true,
+	}
+	httpPollTask := workflow.NewHttpPollTask("worker_task", &input)
+	httpPollTask.RetryPolicy(2, workflow.FixedRetry, 10, 1)
+	httpPollTask.Input("url", "${workflow.input.url}")
+	httpPollTask.CacheConfig("${url}", 120)
+	wf := workflow.NewConductorWorkflow(nil).
+		Name("workflow_with_http_poll_task").
+		Version(1).
+		Add(httpPollTask)
+	workflowDef := wf.ToWorkflowDef()
+	assert.NotNil(t, workflowDef)
+	assert.Equal(t, 1, len(workflowDef.Tasks))
+	workflowTask := workflowDef.Tasks[0]
+	assert.NotNil(t, workflowTask.TaskDefinition)
+
+	// Check task def
+	assert.Equal(t, int32(10), workflowTask.TaskDefinition.RetryDelaySeconds)
+	assert.Equal(t, string(workflow.FixedRetry), workflowTask.TaskDefinition.RetryLogic)
+	assert.Equal(t, int32(2), workflowTask.TaskDefinition.RetryCount)
+
+	// Check task basic properties
+	assert.Equal(t, "HTTP_POLL", workflowTask.Type_)
+	assert.Equal(t, "worker_task", workflowTask.TaskReferenceName)
+	assert.NotNil(t, workflowTask.InputParameters)
+
+	// Check for the url parameter (added via Input method)
+	assert.Equal(t, "${workflow.input.url}", workflowTask.InputParameters["url"])
+
+	// Check http_request parameter exists
+	httpRequest, ok := workflowTask.InputParameters["http_request"].(map[string]interface{})
+	assert.True(t, ok, "http_request parameter should be a map")
+	assert.NotNil(t, httpRequest, "http_request should not be nil")
+
+	// Check all fields in http_request match what we provided
+	assert.Equal(t, "GET", httpRequest["method"], "Method should match")
+	assert.Equal(t, "http://localhost:8081/api/hello/intermittent-failures?name=Http_poll_test", httpRequest["uri"], "URI should match")
+	assert.Equal(t, "application/json", httpRequest["accept"], "Accept should match")
+	assert.Equal(t, "application/json", httpRequest["contentType"], "ContentType should match")
+	assert.Equal(t, 1, httpRequest["pollingInterval"], "PollingInterval should match")
+	assert.Equal(t, "FIXED", httpRequest["pollingStrategy"], "PollingStrategy should match")
+	assert.Equal(t, "(function(){ return $.output.body.length > 10;})();", httpRequest["terminationCondition"], "TerminationCondition should match")
+	assert.Equal(t, true, httpRequest["encode"], "Encode should match")
+
+	json, _ := json.Marshal(workflowDef)
+	fmt.Println(string(json))
+}
+
 func TestUpdateTaskWithTaskId(t *testing.T) {
 
 	updateTask := workflow.NewUpdateTaskWithTaskId("update_task_ref", model.CompletedTask, "target_task_to_update")
 	updateTask.MergeOutput(true)
 	updateTask.TaskOutput(map[string]interface{}{"key": map[string]interface{}{"nestedKey": "nestedValue"}})
 
-	wf := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
+	wf := workflow.NewConductorWorkflow(nil).
 		Name("workflow_with_update_task").
 		Version(1).
 		Add(updateTask)
@@ -82,12 +139,11 @@ func TestUpdateTaskWithTaskId(t *testing.T) {
 }
 
 func TestUpdateTaskWithWorkflowIdAndTaskRef(t *testing.T) {
-
 	updateTask := workflow.NewUpdateTask("update_task_ref", model.CompletedTask, "target_workflow", "target_task_ref")
 	updateTask.MergeOutput(true)
 	integers := []int{2, 3, 5, 7, 11, 13}
 	updateTask.TaskOutput(map[string]interface{}{"key": integers})
-	wf := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
+	wf := workflow.NewConductorWorkflow(nil).
 		Name("workflow_with_update_task").
 		Version(1).
 		Add(updateTask)
@@ -105,4 +161,42 @@ func TestUpdateTaskWithWorkflowIdAndTaskRef(t *testing.T) {
 
 	json, _ := json.Marshal(workflowDef)
 	fmt.Println(string(json))
+}
+
+func TestWorkflowRateLimitConfig(t *testing.T) {
+	// Create workflow with rate limit configuration
+	wf := workflow.NewConductorWorkflow(nil).
+		Name("TEST_GO_RATE_LIMIT_WORKFLOW").
+		Version(1).
+		Description("Test workflow with rate limiting").
+		RateLimitKey("test_key").
+		ConcurrentExecutionLimit(5)
+
+	// Verify rate limit configuration
+	rateLimitConfig := wf.GetRateLimitConfig()
+	assert.NotNil(t, rateLimitConfig)
+	assert.Equal(t, "test_key", rateLimitConfig.RateLimitKey)
+	assert.Equal(t, int32(5), rateLimitConfig.ConcurrentExecLimit)
+
+	// Convert to WorkflowDef and verify
+	workflowDef := wf.ToWorkflowDef()
+	assert.NotNil(t, workflowDef.RateLimitConfig)
+	assert.Equal(t, "test_key", workflowDef.RateLimitConfig.RateLimitKey)
+	assert.Equal(t, int32(5), workflowDef.RateLimitConfig.ConcurrentExecLimit)
+
+	// Use the workflow to set the rate limit config
+	rateLimitConfig = &model.RateLimitConfig{
+		RateLimitKey:        "test_key_1",
+		ConcurrentExecLimit: 10,
+	}
+	wf_2 := workflow.NewConductorWorkflow(nil).
+		Name("TEST_GO_RATE_LIMIT_WORKFLOW").
+		Version(1).
+		Description("Test workflow with rate limiting").
+		SetRateLimitConfig(rateLimitConfig)
+
+	workflowDef = wf_2.ToWorkflowDef()
+	assert.NotNil(t, workflowDef.RateLimitConfig)
+	assert.Equal(t, "test_key_1", workflowDef.RateLimitConfig.RateLimitKey)
+	assert.Equal(t, int32(10), workflowDef.RateLimitConfig.ConcurrentExecLimit)
 }

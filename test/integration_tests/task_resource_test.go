@@ -11,27 +11,30 @@ package integration_tests
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/conductor-sdk/conductor-go/sdk/model"
 	"github.com/conductor-sdk/conductor-go/sdk/workflow"
 	"github.com/conductor-sdk/conductor-go/test/testdata"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUpdateTaskRefByName(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+	uuid := uuid.New().String()
 	simpleTaskWorkflow := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
-		Name("TEST_GO_WORKFLOW_UPDATE_TASK").
+		Name("TEST_GO_WORKFLOW_UPDATE_TASK_" + uuid).
 		Version(1).
 		Add(testdata.TestSimpleTask)
 
-	err := testdata.ValidateWorkflowRegistration(simpleTaskWorkflow)
-
-	if err != nil {
-		t.Fatal(
-			"Failed to register workflow. Reason: ", err.Error(),
-		)
-	}
+	require.NoError(t, testdata.ValidateWorkflowRegistration(simpleTaskWorkflow))
+	t.Cleanup(func() {
+		require.NoError(t, testdata.ValidateWorkflowDeletion(simpleTaskWorkflow), "Failed to delete workflow")
+	})
 
 	workflowId, response, err := testdata.WorkflowClient.StartWorkflow(
 		context.Background(),
@@ -39,13 +42,12 @@ func TestUpdateTaskRefByName(t *testing.T) {
 		simpleTaskWorkflow.GetName(),
 		nil,
 	)
-	if err != nil {
-		t.Fatal(
-			"Failed to start workflow. Reason: ", err.Error(),
-			", workflowId: ", workflowId,
-			", response:, ", *response,
-		)
-	}
+	require.NoError(t, err, "Failed to start workflow")
+	require.Equal(t, http.StatusOK, response.StatusCode, "Expected status code 200, got %d", response.StatusCode)
+	require.NotEmpty(t, workflowId, "Workflow ID is empty")
+	t.Cleanup(func() {
+		assert.NoError(t, testdata.ValidateWorkflowExecutionDeletion(&model.Workflow{WorkflowId: workflowId}), "Failed to delete workflow execution")
+	})
 	outputData := map[string]interface{}{
 		"key": "value",
 	}
@@ -56,14 +58,9 @@ func TestUpdateTaskRefByName(t *testing.T) {
 		testdata.TaskName,
 		string(model.CompletedTask),
 	)
-	if err != nil {
-		t.Fatal(
-			"Failed to updated task by ref name. Reason: ", err.Error(),
-			", workflowId: ", workflowId,
-			", return_value: ", returnValue,
-			", response:, ", *response,
-		)
-	}
+	require.NoError(t, err, "Failed to updated task by ref name")
+	require.Equal(t, http.StatusOK, response.StatusCode, "Expected status code 200, got %d", response.StatusCode)
+	require.NotEmpty(t, returnValue, "Return value is empty")
 	errorChannel := make(chan error)
 	go testdata.ValidateWorkflowDaemon(
 		5*time.Second,
@@ -73,17 +70,5 @@ func TestUpdateTaskRefByName(t *testing.T) {
 		model.CompletedWorkflow,
 	)
 	err = <-errorChannel
-	if err != nil {
-		t.Fatal(
-			"Failed to validate workflow. Reason: ", err.Error(),
-			", workflowId: ", workflowId,
-		)
-	} else {
-		err := testdata.ValidateWorkflowDeletion(simpleTaskWorkflow)
-		if err != nil {
-			t.Fatal(
-				"Failed to delete workflow. Reason: ", err.Error(),
-			)
-		}
-	}
+	require.NoError(t, err, "Failed to validate workflow")
 }

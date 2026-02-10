@@ -27,9 +27,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/conductor-sdk/conductor-go/sdk/log"
 	"github.com/conductor-sdk/conductor-go/sdk/model"
 	"github.com/conductor-sdk/conductor-go/sdk/settings"
-	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -73,25 +73,14 @@ func GetToken(credentials settings.AuthenticationSettings, httpSettings *setting
 	if err != nil {
 		return localVarReturnValue, localVarHttpResponse, err
 	}
-	if localVarHttpResponse.StatusCode < 300 {
-		err = decode(&localVarReturnValue, localVarBody, localVarHttpResponse.Header.Get("Content-Type"))
-		if err == nil {
-			return localVarReturnValue, localVarHttpResponse, err
-		}
-	}
-	if localVarHttpResponse.StatusCode >= 300 {
+
+	if localVarHttpResponse.StatusCode < 200 || localVarHttpResponse.StatusCode >= 300 {
 		newErr := fmt.Errorf(string(localVarBody))
-		if localVarHttpResponse.StatusCode == 200 {
-			var v model.Task
-			err = decode(&v, localVarBody, localVarHttpResponse.Header.Get("Content-Type"))
-			if err != nil {
-				return localVarReturnValue, localVarHttpResponse, newErr
-			}
-			return localVarReturnValue, localVarHttpResponse, newErr
-		}
 		return localVarReturnValue, localVarHttpResponse, newErr
+	} else {
+		err = decode(&localVarReturnValue, localVarBody, localVarHttpResponse.Header.Get("Content-Type"))
 	}
-	return localVarReturnValue, localVarHttpResponse, nil
+	return localVarReturnValue, localVarHttpResponse, err
 }
 
 func prepareRequest(
@@ -245,9 +234,7 @@ func contains(haystack []string, needle string) bool {
 }
 
 func setBody(body interface{}, contentType string) (bodyBuf *bytes.Buffer, err error) {
-	if bodyBuf == nil {
-		bodyBuf = &bytes.Buffer{}
-	}
+	bodyBuf = &bytes.Buffer{}
 	if reader, ok := body.(io.Reader); ok {
 		_, err = bodyBuf.ReadFrom(reader)
 	} else if b, ok := body.([]byte); ok {
@@ -259,7 +246,7 @@ func setBody(body interface{}, contentType string) (bodyBuf *bytes.Buffer, err e
 	} else if jsonCheck.MatchString(contentType) {
 		err = json.NewEncoder(bodyBuf).Encode(body)
 	} else if xmlCheck.MatchString(contentType) {
-		xml.NewEncoder(bodyBuf).Encode(body)
+		err = xml.NewEncoder(bodyBuf).Encode(body)
 	}
 
 	if err != nil {
@@ -301,7 +288,7 @@ func getDecompressedBody(response *http.Response) ([]byte, error) {
 	case "gzip":
 		reader, err = gzip.NewReader(response.Body)
 		if err != nil {
-			log.Error("Unable to decompress the response ", err.Error())
+			log.Error("Unable to decompress the response", "error", err.Error())
 			if err == io.EOF {
 				return nil, nil
 			}

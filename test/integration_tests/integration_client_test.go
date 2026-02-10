@@ -2,16 +2,20 @@ package integration_tests
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/antihax/optional"
 	"github.com/conductor-sdk/conductor-go/sdk/client"
+	"github.com/conductor-sdk/conductor-go/sdk/model"
 	"github.com/conductor-sdk/conductor-go/sdk/model/integration"
 	"github.com/conductor-sdk/conductor-go/test/testdata"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIntegrationClient(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	ctx := context.Background()
 
 	// Instantiate the IntegrationClient
@@ -49,7 +53,7 @@ func TestIntegrationClient(t *testing.T) {
 	providers, resp, err := integrationClient.GetIntegrationProviders(ctx, nil)
 	require.NoError(t, err, "error fetching integration providers")
 	require.NotNil(t, resp, "response should not be nil for GetIntegrationProviders")
-	require.Greater(t, len(providers), len(integrationEntries), "the number of providers fetched should match the entries inserted")
+	require.GreaterOrEqual(t, len(providers), len(integrationEntries), "the number of providers fetched should match the entries inserted")
 
 	// Testing GetIntegrationProvider for each inserted entry
 	for i, entry := range integrationEntries {
@@ -67,8 +71,56 @@ func TestIntegrationClient(t *testing.T) {
 	providerName := names[0]
 	apiModel := "DefaultModel"
 	promptName := "TestPrompt"
+	description := "greetings"
 	opts := client.PromptResourceApiSaveMessageTemplateOpts{Models: []string{providerName + ":" + apiModel}}
-	promptClient.SaveMessageTemplate(ctx, "Say hello to ${name}", "greetings", promptName, &opts)
+	promptClient.SaveMessageTemplate(ctx, "Say hello to ${name}", description, promptName, &opts)
+
+	promptTemplate, resp, err := promptClient.GetMessageTemplate(ctx, promptName)
+	require.NoError(t, err)
+	require.NotNil(t, resp, "response should not be nil for GetMessageTemplate")
+	require.Equal(t, 200, resp.StatusCode)
+	require.NotNil(t, promptTemplate)
+	require.Equal(t, promptName, promptTemplate.Name)
+	require.Equal(t, description, promptTemplate.Description)
+
+	tags := []model.Tag{
+		{
+			Key:   "environment",
+			Value: "test",
+			Type_: "metadata",
+		},
+		{
+			Key:   "owner",
+			Value: "integration-test",
+			Type_: "ownership",
+		},
+	}
+
+	// Add Tags on prompt template
+	resp, err = promptClient.PutTagForPromptTemplate(ctx, tags, promptName)
+	require.NoError(t, err)
+	require.NotNil(t, resp, "response should not be nil for PutTagForPromptTemplate")
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Get Tags on prompt template
+	tags, resp, err = promptClient.GetTagsForPromptTemplate(ctx, promptName)
+	require.NoError(t, err)
+	require.NotNil(t, resp, "response should not be nil for GetTagsForPromptTemplate")
+	require.Equal(t, 200, resp.StatusCode)
+	require.Equal(t, 2, len(tags))
+
+	// Delete Tag on prompt template
+	resp, err = promptClient.DeleteTagForPromptTemplate(ctx, tags, promptName)
+	require.NoError(t, err)
+	require.NotNil(t, resp, "response should not be nil for DeleteTagForPromptTemplate")
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Get Tags on prompt template
+	tags, resp, err = promptClient.GetTagsForPromptTemplate(ctx, promptName)
+	require.NoError(t, err)
+	require.NotNil(t, resp, "response should not be nil for GetTagsForPromptTemplate")
+	require.Equal(t, 200, resp.StatusCode)
+	require.Equal(t, 0, len(tags))
 
 	// Create an Integration API
 	_, err = integrationClient.SaveIntegrationApi(ctx, apiUpdate, providerName, apiModel)
@@ -97,6 +149,30 @@ func TestIntegrationClient(t *testing.T) {
 	require.NotNil(t, resp, "Response should not be nil")
 	require.NotEmpty(t, prompts, "Expected non-empty list of prompts")
 
+	integrations, resp, err := testdata.IntegrationClient.GetAllIntegrations(
+		context.Background(), &client.IntegrationResourceApiGetAllIntegrationsOpts{
+			ActiveOnly: optional.NewBool(true),
+		})
+
+	require.NoError(t, err, "Failed to get integrations")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode, "Expected status code 200, got %d", resp.StatusCode)
+	for i, integration := range integrations {
+		require.True(t, integration.Enabled, "Integration #%d (%s) is not active, but should be", i, integration.Name)
+	}
+
+	require.GreaterOrEqual(t, len(integrations), 2)
+
+	for _, integration := range integrations {
+		require.NotNil(t, integration)
+		require.True(t, integration.Enabled)
+		require.NotEmpty(t, integration.Category)
+	}
+
+	_, resp, err = testdata.IntegrationClient.GetIntegrationProviderDefs(ctx)
+	require.NoError(t, err, "Failed to retrieve integration providers")
+	require.NotNil(t, resp, "Response should not be nil")
+
 	promptClient.DeleteMessageTemplate(ctx, promptName)
 	template, res, err := promptClient.GetMessageTemplate(ctx, promptName)
 	require.NotNil(t, err)
@@ -108,12 +184,13 @@ func TestIntegrationClient(t *testing.T) {
 	require.NoError(t, err, "Failed to delete integration API")
 
 	// Cleanup: Deleting providers to clean the test environment
-	for i, _ := range integrationEntries {
+	for i := range integrationEntries {
 		resp, err = integrationClient.DeleteIntegrationProvider(ctx, names[i])
 		require.NoError(t, err, "error deleting integration provider")
 		require.NotNil(t, resp, "response should not be nil for DeleteIntegrationProvider")
 	}
 }
+
 func NewIntegrationClient() client.IntegrationClient {
 	return testdata.IntegrationClient
 }

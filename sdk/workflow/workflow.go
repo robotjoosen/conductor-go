@@ -12,9 +12,9 @@ package workflow
 import (
 	"encoding/json"
 
+	"github.com/conductor-sdk/conductor-go/sdk/log"
 	"github.com/conductor-sdk/conductor-go/sdk/model"
 	"github.com/conductor-sdk/conductor-go/sdk/workflow/executor"
-	log "github.com/sirupsen/logrus"
 )
 
 type TimeoutPolicy string
@@ -41,6 +41,9 @@ type ConductorWorkflow struct {
 	restartable                   bool
 	workflowStatusListenerEnabled bool
 	idempotencyKey                string
+	tags                          []model.TagObject
+	overwiteTags                  bool
+	rateLimitConfig               *model.RateLimitConfig
 }
 
 func NewConductorWorkflow(executor *executor.WorkflowExecutor) *ConductorWorkflow {
@@ -48,6 +51,7 @@ func NewConductorWorkflow(executor *executor.WorkflowExecutor) *ConductorWorkflo
 		executor:      executor,
 		timeoutPolicy: AlertOnly,
 		restartable:   true,
+		overwiteTags:  true,
 	}
 }
 
@@ -134,6 +138,64 @@ func (workflow *ConductorWorkflow) OwnerEmail(ownerEmail string) *ConductorWorkf
 	return workflow
 }
 
+func (workflow *ConductorWorkflow) Tags(tags map[string]string) *ConductorWorkflow {
+	// Clear existing tags
+	workflow.tags = nil
+
+	// Convert and add new tags
+	for key, value := range tags {
+		metadataTag := model.MetadataTag{
+			Key:   key,
+			Value: value,
+		}
+
+		tagObject := model.NewTagObject(metadataTag)
+		workflow.tags = append(workflow.tags, tagObject)
+	}
+	return workflow
+}
+
+func (workflow *ConductorWorkflow) OverwriteTags(overwrite bool) *ConductorWorkflow {
+	workflow.overwiteTags = overwrite
+	return workflow
+}
+
+// RateLimitKey sets the rate limit key for grouping workflow executions.
+// Can be a fixed value (e.g., "max") or a dynamic variable from workflow input
+// (e.g., "${workflow.input.correlationId}")
+// This allows for flexible rate limiting strategies:
+// - Fixed key: All workflow instances share the same rate limit
+// - Dynamic key: Different groups of workflows have separate rate limits
+func (workflow *ConductorWorkflow) RateLimitKey(key string) *ConductorWorkflow {
+	if workflow.rateLimitConfig == nil {
+		workflow.rateLimitConfig = &model.RateLimitConfig{}
+	}
+	workflow.rateLimitConfig.RateLimitKey = key
+	return workflow
+}
+
+// ConcurrentExecutionLimit sets the maximum number of workflow executions
+// that can run concurrently for each rate limit key.
+func (workflow *ConductorWorkflow) ConcurrentExecutionLimit(limit int32) *ConductorWorkflow {
+	if workflow.rateLimitConfig == nil {
+		workflow.rateLimitConfig = &model.RateLimitConfig{}
+	}
+	workflow.rateLimitConfig.ConcurrentExecLimit = limit
+	return workflow
+}
+
+// SetRateLimitConfig sets the complete rate limit configuration for the workflow.
+// This method can be used as an alternative to the fluent methods RateLimitKey and ConcurrentExecutionLimit.
+func (workflow *ConductorWorkflow) SetRateLimitConfig(config *model.RateLimitConfig) *ConductorWorkflow {
+	workflow.rateLimitConfig = config
+	return workflow
+}
+
+// GetRateLimitConfig returns the current rate limit configuration
+func (workflow *ConductorWorkflow) GetRateLimitConfig() *model.RateLimitConfig {
+	return workflow.rateLimitConfig
+}
+
 func (workflow *ConductorWorkflow) GetName() (name string) {
 	return workflow.name
 }
@@ -184,12 +246,41 @@ func (workflow *ConductorWorkflow) StartWorkflow(startWorkflowRequest *model.Sta
 	return workflow.executor.StartWorkflow(startWorkflowRequest)
 }
 
+// ExecuteWorkflowWithReturnStrategy starts the workflow with the provided input and waits for a specified return condition.
+//
+// Parameters:
+//   - input: The workflow input. Must be serializable to JSON.
+//   - consistency: The desired consistency level for workflow execution.
+//   - returnStrategy: Strategy indicating whether to wait for task completion or workflow completion.
+//   - waitUntilTask: A list of task reference names. The method returns once all specified tasks are completed.
+//     If empty, it waits until the workflow completes or reaches the server-defined timeout.
+//   - waitForSec: Maximum time to wait (in seconds) before returning.
+//
+// Returns:
+// - workflowRun: Contains the workflow execution output (if available).
+// - err: Error, if any occurred during execution or timeout.
+func (workflow *ConductorWorkflow) ExecuteWorkflowWithReturnStrategy(input interface{}, consistency model.WorkflowConsistency, returnStrategy model.ReturnStrategy, waitUntilTask []string, waitForSec int) (workflowRun *model.SignalResponse, err error) {
+	version := workflow.GetVersion()
+	return workflow.executor.ExecuteWorkflowWithReturnStrategy(
+		&model.StartWorkflowRequest{
+			Name:        workflow.GetName(),
+			Version:     version,
+			Input:       getInputAsMap(input),
+			WorkflowDef: workflow.ToWorkflowDef(),
+		},
+		consistency,
+		returnStrategy,
+		waitUntilTask,
+		waitForSec,
+	)
+}
+
 // Executes the workflow with specific input and wait for the workflow to complete or until the task specified as waitUntil is completed.
 // waitUntilTask Reference name of the task which MUST be completed before returning the output.  if specified as empty string, then the call waits until the
 // workflow completes or reaches the timeout (as specified on the server)
 // The input struct MUST be serializable to JSON
 // Returns the workflow output
-func (workflow *ConductorWorkflow) ExecuteWorkflowWithInput(input interface{}, waitUntilTask string) (worfklowRun *model.WorkflowRun, err error) {
+func (workflow *ConductorWorkflow) ExecuteWorkflowWithInput(input interface{}, waitUntilTask string) (workflowRun *model.WorkflowRun, err error) {
 	version := workflow.GetVersion()
 	return workflow.executor.ExecuteWorkflow(
 		&model.StartWorkflowRequest{
@@ -224,13 +315,24 @@ func getInputAsMap(input interface{}) map[string]interface{} {
 	if err != nil {
 		log.Debug(
 			"Failed to parse input",
-			", reason: ", err.Error(),
+			"reason", err,
 		)
 		return nil
 	}
 	var parsedInput map[string]interface{}
 	json.Unmarshal(data, &parsedInput)
 	return parsedInput
+}
+
+// GetTags returns the workflow tags as a map of key-value pairs
+func (workflow *ConductorWorkflow) GetTags() map[string]string {
+	result := make(map[string]string)
+
+	for _, tag := range workflow.tags {
+		result[tag.Key] = tag.Value
+	}
+
+	return result
 }
 
 // ToWorkflowDef converts the workflow to the JSON serializable format
@@ -251,6 +353,9 @@ func (workflow *ConductorWorkflow) ToWorkflowDef() *model.WorkflowDef {
 		InputTemplate:                 workflow.inputTemplate,
 		Restartable:                   workflow.restartable,
 		WorkflowStatusListenerEnabled: workflow.workflowStatusListenerEnabled,
+		Tags:                          workflow.tags,
+		OverwriteTags:                 workflow.overwiteTags,
+		RateLimitConfig:               workflow.rateLimitConfig,
 	}
 }
 

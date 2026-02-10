@@ -1,0 +1,199 @@
+name: Integration + Backward Compatibility Tests (SM cluster)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-tests-sm:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cluster: [v5, v4]
+        suite: [integration, compatibility]
+    name: Integration + Backward Compatibility Tests (SM cluster) - ${{ matrix.cluster }} - ${{ matrix.suite }}
+
+    permissions:
+      contents: read       # minimal read access
+      checks: write        # needed for test report annotations
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@v1.12.0
+
+      - name: Run Unit tests with coverage
+        if: ${{ matrix.suite == 'integration' }}
+        run: |
+          mkdir -p coverage
+          go test -v -count=1 -coverprofile=coverage/coverage-unit.out -covermode=atomic -coverpkg=github.com/conductor-sdk/conductor-go/sdk/... ./test/unit_tests/...
+          echo "Unit test coverage generated"
+
+      - name: Run SDK unit tests with coverage
+        if: ${{ matrix.suite == 'integration' }}
+        run: |
+          mkdir -p coverage
+          go test -v -count=1 -coverprofile=coverage/coverage-sdk.out -covermode=atomic ./sdk/...
+          echo "SDK test coverage generated"
+
+      - name: Run Integration tests (SM cluster)
+        if: ${{ matrix.suite == 'integration' }}
+        id: integration_tests
+        continue-on-error: true
+        env:
+          CONDUCTOR_SERVER_URL: ${{ matrix.cluster == 'v5' && vars.SERVER_URL_V5 || vars.SERVER_URL }}
+          CONDUCTOR_AUTH_KEY: ${{ matrix.cluster == 'v5' && secrets.AUTH_KEY_V5 || secrets.AUTH_KEY }}
+          CONDUCTOR_AUTH_SECRET: ${{ matrix.cluster == 'v5' && secrets.AUTH_SECRET_V5 || secrets.AUTH_SECRET }}
+        run: |
+          mkdir -p coverage
+          REPORT=report-${{ matrix.suite }}-${{ matrix.cluster }}.xml
+          RERUN=rerun-report-${{ matrix.suite }}-${{ matrix.cluster }}.txt
+          COVERAGE=coverage/coverage-${{ matrix.suite }}-${{ matrix.cluster }}.out
+          gotestsum --format testname --junitfile "$REPORT" --rerun-fails=3 --rerun-fails-report="$RERUN" --packages="./test/integration_tests/..." -- -v -count=1 -coverprofile="$COVERAGE" -covermode=atomic -coverpkg=github.com/conductor-sdk/conductor-go/sdk/...
+
+      - name: Publish test results (SM cluster)
+        if: ${{ always() && matrix.suite == 'integration' }}
+        uses: dorny/test-reporter@v2
+        with:
+          name: Integration tests report (SM cluster) - ${{ matrix.cluster }}
+          path: report-${{ matrix.suite }}-${{ matrix.cluster }}.xml
+          reporter: java-junit
+          fail-on-error: false
+          fail-on-empty: true
+
+      - name: Append rerun details to Summary
+        if: ${{ always() && matrix.suite == 'integration' }}
+        run: |
+          RERUN=rerun-report-${{ matrix.suite }}-${{ matrix.cluster }}.txt
+          if [ -f "$RERUN" ]; then
+            {
+              echo "### Rerun details (${{ matrix.cluster }})"
+              echo '```'
+              cat "$RERUN"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Generate Coverage Report
+        if: ${{ always() && matrix.suite == 'integration' }}
+        run: |
+          # Generate reports for unit test coverage if it exists
+          if [ -f coverage/coverage-unit.out ] && [ -s coverage/coverage-unit.out ]; then
+            go tool cover -func=coverage/coverage-unit.out > coverage/coverage-unit.txt || true
+            echo "Unit test coverage summary:"
+            tail -1 coverage/coverage-unit.txt || echo "No unit test coverage data"
+          fi
+          
+          # Generate reports for SDK test coverage if it exists
+          if [ -f coverage/coverage-sdk.out ] && [ -s coverage/coverage-sdk.out ]; then
+            go tool cover -func=coverage/coverage-sdk.out > coverage/coverage-sdk.txt || true
+            echo "SDK test coverage summary:"
+            tail -1 coverage/coverage-sdk.txt || echo "No SDK test coverage data"
+          fi
+          
+          # Generate reports for integration test coverage if it exists
+          INTEGRATION_COVERAGE=coverage/coverage-integration-${{ matrix.cluster }}.out
+          if [ -f "$INTEGRATION_COVERAGE" ] && [ -s "$INTEGRATION_COVERAGE" ]; then
+            go tool cover -html="$INTEGRATION_COVERAGE" -o coverage/coverage.html || true
+            go tool cover -func="$INTEGRATION_COVERAGE" > coverage/coverage.txt || true
+            echo "Integration test coverage summary (${{ matrix.cluster }}):"
+            tail -1 coverage/coverage.txt || echo "No integration test coverage data"
+          fi
+          
+      - name: Upload coverage to Codecov
+        if: ${{ always() && matrix.suite == 'integration' }}
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: |
+            coverage/coverage-unit.out
+            coverage/coverage-sdk.out
+            coverage/coverage-integration-${{ matrix.cluster }}.out
+          flags: integration-tests-${{ matrix.cluster }}
+          name: go-sdk-integration-${{ matrix.cluster }}
+          fail_ci_if_error: false
+          
+      - name: Check Integration Tests Status
+        if: ${{ matrix.suite == 'integration' && steps.integration_tests.outcome == 'failure' }}
+        run: exit 1
+          
+      - name: Upload test artifacts
+        if: ${{ always() && matrix.suite == 'integration' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-and-reruns-${{ matrix.cluster }}
+          path: |
+            report-${{ matrix.suite }}-${{ matrix.cluster }}.xml
+            rerun-report-${{ matrix.suite }}-${{ matrix.cluster }}.txt
+            coverage/coverage.html
+            coverage/coverage.txt
+            coverage/coverage-sdk.txt
+          if-no-files-found: warn
+
+      - name: Run Backward Compatibility Tests (SM cluster)
+        if: ${{ matrix.suite == 'compatibility' }}
+        id: compat_tests
+        env:
+          CONDUCTOR_SERVER_URL: ${{ matrix.cluster == 'v5' && vars.SERVER_URL_V5 || vars.SERVER_URL }}
+          CONDUCTOR_AUTH_KEY: ${{ matrix.cluster == 'v5' && secrets.AUTH_KEY_V5 || secrets.AUTH_KEY }}
+          CONDUCTOR_AUTH_SECRET: ${{ matrix.cluster == 'v5' && secrets.AUTH_SECRET_V5 || secrets.AUTH_SECRET }}
+        run: |
+          echo "🚀 Starting Backward Compatibility Tests (cluster ${{ matrix.cluster }})..."
+          cd test/backward_compatibility
+          chmod +x run_compatibility.sh
+          
+          # Run with retry logic - attempt up to 3 times
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          SUCCESS=false
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ] && [ "$SUCCESS" = "false" ]; do
+            if [ $ATTEMPT -gt 1 ]; then
+              echo "🔄 Retry attempt $ATTEMPT/$MAX_ATTEMPTS for backward compatibility tests"
+            fi
+            
+            if ./run_compatibility.sh; then
+              SUCCESS=true
+              echo "✅ Backward compatibility tests passed on attempt $ATTEMPT"
+            else
+              if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+                echo "❌ Backward compatibility tests failed on attempt $ATTEMPT. Retrying in 5 seconds..."
+                sleep 5
+              else
+                echo "❌ Backward compatibility tests failed after $MAX_ATTEMPTS attempts"
+                exit 1
+              fi
+            fi
+            
+            ATTEMPT=$((ATTEMPT+1))
+          done
+          
+          # Add compatibility test retry information to GitHub summary
+          if [ "$SUCCESS" = "true" ] && [ $ATTEMPT -gt 2 ]; then
+            {
+              echo "### Backward Compatibility Tests Retry Summary (${{ matrix.cluster }})"
+              echo "✅ Tests passed after $((ATTEMPT-1)) attempts"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

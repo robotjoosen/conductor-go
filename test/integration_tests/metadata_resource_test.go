@@ -16,13 +16,45 @@ import (
 	"github.com/conductor-sdk/conductor-go/sdk/model"
 	"github.com/conductor-sdk/conductor-go/test/testdata"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const WorkflowName = "TestGoSDKWorkflowWithTags"
 const TaskName = "TEST_GO_SIMPLE_TASK"
 
-func TestRegisterWorkflowDefWithTags(t *testing.T) {
+func TestRegisterWorkflowDef(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
 
+	ctx := context.Background()
+	_, _ = testdata.MetadataClient.UnregisterWorkflowDef(ctx, WorkflowName, 1)
+	task := model.WorkflowTask{
+		Name:              "simple_task",
+		TaskReferenceName: "simple_task_ref",
+		Description:       "Test Simple Task",
+	}
+
+	workflowTasks := []model.WorkflowTask{}
+	workflowTasks = append(workflowTasks, task)
+
+	workflowDef := model.WorkflowDef{
+		Name:        WorkflowName,
+		Description: "Test Workflow created by GO SDK",
+		Tasks:       workflowTasks,
+	}
+
+	resp, err := testdata.MetadataClient.RegisterWorkflowDef(ctx, true, workflowDef)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	t.Cleanup(func() {
+		_, err := testdata.MetadataClient.UnregisterWorkflowDef(context.Background(), WorkflowName, 1)
+		require.NoError(t, err, "Failed to delete workflow")
+	})
+}
+
+func TestRegisterWorkflowDefWithTags(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
 	_, _ = testdata.MetadataClient.UnregisterWorkflowDef(context.Background(), WorkflowName, 1)
 	task := model.WorkflowTask{
 		Name:              "simple_task",
@@ -50,35 +82,26 @@ func TestRegisterWorkflowDefWithTags(t *testing.T) {
 
 	tags, _, err2 := testdata.TagsClient.GetWorkflowTags(context.Background(), WorkflowName)
 
-	if err2 == nil {
-		assert.Equal(t, len(tags), 1)
-		assert.Equal(t, tags[0].Key, tag0.Key)
-		assert.Equal(t, tags[0].Value, tag0.Value)
-
-	} else {
-		t.Fatal(err2)
-	}
+	require.NoError(t, err2)
+	require.Equal(t, 1, len(tags))
+	assert.Equal(t, tag0.Key, tags[0].Key)
+	assert.Equal(t, tag0.Value, tags[0].Value)
 
 	tags2, err := testdata.MetadataClient.GetTagsForWorkflowDef(context.Background(), WorkflowName)
 
-	if err == nil {
-		assert.Equal(t, len(tags2), 1)
-		assert.Equal(t, tags2[0].Key, "key_0")
-		assert.Equal(t, tags2[0].Value, "value_0")
-	}
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tags2))
+	assert.Equal(t, "key_0", tags2[0].Key)
+	assert.Equal(t, "value_0", tags2[0].Value)
 
 	t.Cleanup(func() {
 		_, err := testdata.MetadataClient.UnregisterWorkflowDef(context.Background(), WorkflowName, 1)
-
-		if err != nil {
-			t.Fatal(
-				"Failed to delete workflow. Reason: ", err.Error(),
-			)
-		}
+		require.NoError(t, err, "Failed to delete workflow")
 	})
 }
 
 func TestUpdateWorkflowDefWithTags(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
 
 	_, _ = testdata.MetadataClient.UnregisterWorkflowDef(context.Background(), WorkflowName, 1)
 
@@ -129,27 +152,20 @@ func TestUpdateWorkflowDefWithTags(t *testing.T) {
 
 		fetchedTags, err := testdata.MetadataClient.GetTagsForWorkflowDef(context.Background(), WorkflowName)
 
-		if err == nil {
-			assert.Equal(t, len(fetchedTags), len(tc.expectedTags))
-			assert.ElementsMatch(t, fetchedTags, tc.expectedTags)
-
-		} else {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, len(tc.expectedTags), len(fetchedTags))
+		assert.ElementsMatch(t, fetchedTags, tc.expectedTags)
 	}
 
 	t.Cleanup(func() {
 		_, err := testdata.MetadataClient.UnregisterWorkflowDef(context.Background(), WorkflowName, 1)
-
-		if err != nil {
-			t.Fatal(
-				"Failed to delete workflow. Reason: ", err.Error(),
-			)
-		}
+		require.NoError(t, err, "Failed to delete workflow")
 	})
 }
 
 func TestRegisterTaskDefWithTags(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	taskDef := model.TaskDef{
 		Name:        TaskName,
 		Description: "Test task definition created from Go SDK",
@@ -166,29 +182,26 @@ func TestRegisterTaskDefWithTags(t *testing.T) {
 
 	fetchedTags, _, err := testdata.TagsClient.GetTaskTags(context.Background(), TaskName)
 
-	if err == nil {
-		assert.Equal(t, len(tags), 1)
-		assert.Equal(t, fetchedTags[0].Key, tag0.Key)
-		assert.Equal(t, fetchedTags[0].Value, tag0.Value)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tags))
+	assert.Equal(t, tag0.Key, fetchedTags[0].Key)
+	assert.Equal(t, tag0.Value, fetchedTags[0].Value)
 
-	} else {
-		t.Fatal(err)
-	}
 }
 
 func TestGetTagsForTaskDef(t *testing.T) {
-	tags, err := testdata.MetadataClient.GetTagsForTaskDef(context.Background(), TaskName)
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
 
-	if err == nil {
-		assert.Equal(t, len(tags), 1)
-		assert.Equal(t, tags[0].Key, "key_0")
-		assert.Equal(t, tags[0].Value, "value_0")
-	} else {
-		t.Fatal(err)
-	}
+	tags, err := testdata.MetadataClient.GetTagsForTaskDef(context.Background(), TaskName)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tags))
+	assert.Equal(t, "key_0", tags[0].Key)
+	assert.Equal(t, "value_0", tags[0].Value)
 }
 
 func TestUpdateTaskDefWithTags(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	taskDef := model.TaskDef{
 		Name:        TaskName,
 		Description: "Test task definition updated from Go SDK",
@@ -223,22 +236,13 @@ func TestUpdateTaskDefWithTags(t *testing.T) {
 
 		fetchedTags, err := testdata.MetadataClient.GetTagsForTaskDef(context.Background(), TaskName)
 
-		if err == nil {
-			assert.Equal(t, len(fetchedTags), len(tc.expectedTags))
-			assert.ElementsMatch(t, fetchedTags, tc.expectedTags)
-
-		} else {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, len(tc.expectedTags), len(fetchedTags))
+		assert.ElementsMatch(t, fetchedTags, tc.expectedTags)
 	}
 
 	t.Cleanup(func() {
 		_, err := testdata.MetadataClient.UnregisterTaskDef(context.Background(), TaskName)
-
-		if err != nil {
-			t.Fatal(
-				"Failed to delete task definition. Reason: ", err.Error(),
-			)
-		}
+		require.NoError(t, err, "Failed to delete task definition")
 	})
 }

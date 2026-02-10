@@ -1,5 +1,7 @@
 # Conductor OSS Go SDK
 
+[![Build Status](https://github.com/conductor-oss/go-sdk/actions/workflows/build.yml/badge.svg)](https://github.com/conductor-oss/go-sdk/actions/workflows/build.yml)
+
 SDK for developing Go applications that create, manage and execute workflows, and run workers.
 
 [Conductor](https://www.conductor-oss.org/) is the leading open-source orchestration platform allowing developers to build highly scalable distributed applications.
@@ -8,16 +10,20 @@ To learn more about Conductor checkout our [developer's guide](https://docs.cond
 
 [![GitHub stars](https://img.shields.io/github/stars/conductor-oss/conductor.svg?style=social&label=Star&maxAge=)](https://GitHub.com/conductor-oss/conductor/)
 
-
 # Content
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [Installation](#installation)
-- [Hello World!](#hello-world)
-  - [Step 1: Creating the workflow by code](#step-1-creating-the-workflow-by-code)
-  - [Step 2: Creating the worker](#step-2-creating-the-worker)
-  - [Step 3: Running the application](#step-3-running-the-application)
+- [Conductor OSS Go SDK](#conductor-oss-go-sdk)
+- [Content](#content)
+	- [Installation](#installation)
+	- [Hello World](#hello-world)
+		- [Step 1: Creating the workflow by code](#step-1-creating-the-workflow-by-code)
+		- [Step 2: Creating the worker](#step-2-creating-the-worker)
+		- [Step 3: Running the application](#step-3-running-the-application)
+			- [Running the example with a local Conductor OSS server:](#running-the-example-with-a-local-conductor-oss-server)
+			- [Running the example with an Orkes developer account.](#running-the-example-with-an-orkes-developer-account)
+	- [Deprecated Methods](#deprecated-methods)
 - [Further Reading](#further-reading)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -173,42 +179,20 @@ To begin with, let's take a look at the variable declaration in [examples/hello_
 ```go
 
 var (
-	apiClient = client.NewAPIClient(
-		authSettings(),
-		httpSettings(),
-	)
+	apiClient        = client.NewAPIClientFromEnv()
 	taskRunner       = worker.NewTaskRunnerWithApiClient(apiClient)
 	workflowExecutor = executor.NewWorkflowExecutor(apiClient)
 )
 
-func authSettings() *settings.AuthenticationSettings {
-	key := os.Getenv("KEY")
-	secret := os.Getenv("SECRET")
-	if key != "" && secret != "" {
-		return settings.NewAuthenticationSettings(
-			key,
-			secret,
-		)
-	}
-
-	return nil
-}
-
-func httpSettings() *settings.HttpSettings {
-	url := os.Getenv("CONDUCTOR_SERVER_URL")
-	if url == "" {
-		fmt.Fprintf(os.Stderr, "Error: CONDUCTOR_SERVER_URL env variable is not set\n")
-		os.Exit(1)
-	}
-
-	return settings.NewHttpSettings(url)
-}
 ```
 
 First we create an `APIClient` instance. This is a REST client. 
 
-We need to pass on the proper settings to our client. For convenience to run the example you can set the following environment variables: `CONDUCTOR_SERVER_URL`, `KEY`, `SECRET`.
+We need to provide the correct settings to our client. In this example, `client.NewAPIClientFromEnv()` is used, which initializes a new client by reading the settings from the following environment variables: `CONDUCTOR_SERVER_URL`, `CONDUCTOR_AUTH_KEY`, and `CONDUCTOR_AUTH_SECRET`.
+`CONDUCTOR_CLIENT_HTTP_TIMEOUT` lets you configure the HTTP timeout for our client, in seconds. If not set, defaults to 30 seconds.
 
+> [!tip]
+> For advanced configuration options and detailed examples see the [API Client Configuration Guide](docs/api_client/README.md).
 
 Now let's take a look at the `main` function:
 
@@ -265,11 +249,11 @@ cd examples
 go run hello_world/main.go
 ```
 
-#### Running the example in Orkes playground.
+#### Running the example with an [Orkes developer account](https://developer.orkescloud.com).
 ```shell
-export CONDUCTOR_SERVER_URL="https://play.orkes.io/api"
-export KEY="..."
-export SECRET="..."
+export CONDUCTOR_SERVER_URL="https://developer.orkescloud.com/api"
+export CONDUCTOR_AUTH_KEY="..."
+export CONDUCTOR_AUTH_SECRET="..."
 cd examples
 go run hello_world/main.go
 ```
@@ -285,7 +269,13 @@ INFO[0000] Started workflow with Id:14a9fcc5-3d74-11ef-83dc-acde48001122
 INFO[0000] Output of the workflow:map[Greetings:Hello, Gopher] 
 ```
 
+## Deprecated Methods
+Some methods in the SDK client interfaces are now deprecated. They’ve been replaced with newer methods that follow more consistent naming. Please refer to our [Migration Guide](docs/migration_guide.md) for detailed information on how to update your code.
 # Further Reading
 
 - [Writing Workers with the Go SDK](docs/workers_sdk.md)
 - [Authoring Workflows with the Go SDK](docs/workflow_sdk.md)
+- [Logging Configuration](docs/logger_sdk.md)
+- [Migration Guide: Deprecated Methods](docs/migration_guide.md)
+- [API Client Configuration](docs/api_client/README.md) - Complete guide to API client setup, authentication, and proxy configuration
+- [TLS Configuration Guide](docs/api_client/tls_configuration.md) - TLS/SSL configuration for self-signed certificates and mTLS

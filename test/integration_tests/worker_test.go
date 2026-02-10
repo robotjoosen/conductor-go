@@ -16,12 +16,17 @@ import (
 	"github.com/conductor-sdk/conductor-go/sdk/model"
 	"github.com/conductor-sdk/conductor-go/sdk/workflow"
 	"github.com/conductor-sdk/conductor-go/test/testdata"
-	"github.com/sirupsen/logrus"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWorkerBatchSize(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
+	uuid := uuid.New().String()
 	simpleTaskWorkflow := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
-		Name("TEST_GO_WORKFLOW_SIMPLE").
+		Name("TEST_GO_WORKFLOW_SIMPLE_" + uuid).
 		Version(1).
 		Add(testdata.TestSimpleTask)
 	err := testdata.TaskRunner.StartWorker(
@@ -30,93 +35,91 @@ func TestWorkerBatchSize(t *testing.T) {
 		5,
 		testdata.WorkerPollInterval,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	time.Sleep(1 * time.Second)
-	if testdata.TaskRunner.GetBatchSizeForTask(testdata.TestSimpleTask.ReferenceName()) != 5 {
-		t.Fatal("unexpected batch size")
-	}
-	err = testdata.ValidateWorkflowBulk(simpleTaskWorkflow, testdata.WorkflowValidationTimeout, testdata.WorkflowBulkQty)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Equal(t, 5, testdata.TaskRunner.GetBatchSizeForTask(testdata.TestSimpleTask.ReferenceName()), "Unexpected batch size")
+	runningWorkflows, err := testdata.ValidateWorkflowBulk(simpleTaskWorkflow, testdata.ExtendedValidationTimeout, testdata.WorkflowBulkQty)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, testdata.ValidateWorkflowDeletion(simpleTaskWorkflow), "Failed to delete workflow")
+		assert.NoError(t, testdata.ValidateWorkflowExecutionsRunningDeletion(runningWorkflows), "Failed to delete workflow executions")
+	})
+
 	err = testdata.TaskRunner.SetBatchSize(
 		testdata.TestSimpleTask.ReferenceName(),
 		0,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	time.Sleep(1 * time.Second)
-	if testdata.TaskRunner.GetBatchSizeForTask(testdata.TestSimpleTask.ReferenceName()) != 0 {
-		t.Fatal("unexpected batch size")
-	}
+	require.Equal(t, 0, testdata.TaskRunner.GetBatchSizeForTask(testdata.TestSimpleTask.ReferenceName()), "Unexpected batch size")
 	err = testdata.TaskRunner.SetBatchSize(
 		testdata.TestSimpleTask.ReferenceName(),
 		8,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	time.Sleep(1 * time.Second)
-	if testdata.TaskRunner.GetBatchSizeForTask(testdata.TestSimpleTask.ReferenceName()) != 8 {
-		t.Fatal("unexpected batch size")
-	}
-	err = testdata.ValidateWorkflowBulk(simpleTaskWorkflow, testdata.WorkflowValidationTimeout, testdata.WorkflowBulkQty)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Equal(t, 8, testdata.TaskRunner.GetBatchSizeForTask(testdata.TestSimpleTask.ReferenceName()), "Unexpected batch size")
+	updatedRunningWorkflows, err := testdata.ValidateWorkflowBulk(simpleTaskWorkflow, testdata.ExtendedValidationTimeout, testdata.WorkflowBulkQty)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, testdata.ValidateWorkflowExecutionsRunningDeletion(updatedRunningWorkflows), "Failed to delete workflow executions")
+	})
 }
 
 func TestFaultyWorker(t *testing.T) {
-	logrus.SetLevel(logrus.ErrorLevel)
-	taskName := "TEST_GO_FAULTY_TASK"
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
+	uuid := uuid.New().String()
+	taskName := "TEST_GO_FAULTY_TASK_" + uuid
 	wf := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
-		Name("TEST_GO_FAULTY_WORKFLOW").
+		Name("TEST_GO_FAULTY_WORKFLOW_" + uuid).
 		Version(1).
 		Add(workflow.NewSimpleTask(taskName, taskName))
-	err := wf.Register(true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = testdata.TaskRunner.StartWorker(
+	require.NoError(t, wf.Register(true))
+	t.Cleanup(func() {
+		assert.NoError(t, testdata.ValidateWorkflowDeletion(wf), "Failed to delete workflow")
+	})
+
+	err := testdata.TaskRunner.StartWorker(
 		taskName,
 		testdata.FaultyWorker,
 		5,
 		testdata.WorkerPollInterval,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = testdata.ValidateWorkflow(wf, 5*time.Second, model.FailedWorkflow)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	completedWorkflow, err := testdata.ValidateWorkflow(wf, 5*time.Second, model.FailedWorkflow)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, testdata.ValidateWorkflowExecutionDeletion(completedWorkflow), "Failed to delete workflow execution")
+	})
+
 }
 
 func TestWorkerWithNonRetryableError(t *testing.T) {
-	logrus.SetLevel(logrus.ErrorLevel)
-	taskName := "TEST_GO_NON_RETRYABLE_ERROR_TASK"
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
+	uuid := uuid.New().String()
+	taskName := "TEST_GO_NON_RETRYABLE_ERROR_TASK_" + uuid
 	wf := workflow.NewConductorWorkflow(testdata.WorkflowExecutor).
-		Name("TEST_GO_NON_RETRYABLE_ERROR_WF").
+		Name("TEST_GO_NON_RETRYABLE_ERROR_WF_" + uuid).
 		Version(1).
 		Add(workflow.NewSimpleTask(taskName, taskName))
-	err := wf.Register(true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = testdata.TaskRunner.StartWorker(
+
+	require.NoError(t, wf.Register(true))
+	t.Cleanup(func() {
+		assert.NoError(t, testdata.ValidateWorkflowDeletion(wf), "Failed to delete workflow")
+	})
+
+	err := testdata.TaskRunner.StartWorker(
 		taskName,
 		testdata.FaultyWorker,
 		5,
 		testdata.WorkerPollInterval,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = testdata.ValidateWorkflow(wf, 5*time.Second, model.FailedWorkflow)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	completedWorkflow, err := testdata.ValidateWorkflow(wf, 5*time.Second, model.FailedWorkflow)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, testdata.ValidateWorkflowExecutionDeletion(completedWorkflow), "Failed to delete workflow execution")
+	})
 }

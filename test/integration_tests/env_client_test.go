@@ -12,6 +12,8 @@ import (
 )
 
 func TestCreateOrUpdateEnvVariable(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	ctx := context.Background()
 	envClient := NewEnvironmentClient()
 
@@ -26,6 +28,8 @@ func TestCreateOrUpdateEnvVariable(t *testing.T) {
 }
 
 func TestDeleteEnvVariable(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	TestCreateOrUpdateEnvVariable(t)
 	ctx := context.Background()
 	envClient := NewEnvironmentClient()
@@ -33,11 +37,13 @@ func TestDeleteEnvVariable(t *testing.T) {
 	message, resp, err := envClient.DeleteEnvVariable(ctx, "testKey")
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
-	assert.Equal(t, "", message)
+	assert.Equal(t, "test value", message)
 
 }
 
 func TestDeleteTagForEnvVar(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	TestCreateOrUpdateEnvVariable(t)
 	ctx := context.Background()
 	envClient := NewEnvironmentClient()
@@ -51,6 +57,8 @@ func TestDeleteTagForEnvVar(t *testing.T) {
 }
 
 func TestGetEnvVariable(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	ctx := context.Background()
 	envClient := NewEnvironmentClient()
 
@@ -62,6 +70,8 @@ func TestGetEnvVariable(t *testing.T) {
 }
 
 func TestGetAllEnvVariables(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	TestCreateOrUpdateEnvVariable(t)
 	ctx := context.Background()
 	envClient := NewEnvironmentClient()
@@ -73,6 +83,8 @@ func TestGetAllEnvVariables(t *testing.T) {
 }
 
 func TestGetTagsForEnvVar(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	TestUpsertUser(t)
 	ctx := context.Background()
 	envClient := NewEnvironmentClient()
@@ -86,6 +98,8 @@ func TestGetTagsForEnvVar(t *testing.T) {
 }
 
 func TestPutTagForEnvVar(t *testing.T) {
+	testdata.RequireAtLeast(t, testdata.VersionResourceV41)
+
 	ctx := context.Background()
 	envClient := NewEnvironmentClient()
 	tags := []model.Tag{{Key: "tag1", Value: "value1"}}

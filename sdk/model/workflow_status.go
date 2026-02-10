@@ -9,6 +9,8 @@
 
 package model
 
+import "fmt"
+
 type WorkflowStatus string
 
 const (
@@ -20,6 +22,10 @@ const (
 	PausedWorkflow     WorkflowStatus = "PAUSED"
 )
 
+func (w WorkflowStatus) String() string {
+	return string(w)
+}
+
 var (
 	WorkflowTerminalStates = []WorkflowStatus{
 		CompletedWorkflow,
@@ -28,3 +34,22 @@ var (
 		TerminatedWorkflow,
 	}
 )
+
+func ParseWorkflowStatus(status string) (WorkflowStatus, error) {
+	switch status {
+	case string(RunningWorkflow):
+		return RunningWorkflow, nil
+	case string(CompletedWorkflow):
+		return CompletedWorkflow, nil
+	case string(FailedWorkflow):
+		return FailedWorkflow, nil
+	case string(TimedOutWorkflow):
+		return TimedOutWorkflow, nil
+	case string(TerminatedWorkflow):
+		return TerminatedWorkflow, nil
+	case string(PausedWorkflow):
+		return PausedWorkflow, nil
+	default:
+		return RunningWorkflow, fmt.Errorf("invalid workflow status: %s", status)
+	}
+}

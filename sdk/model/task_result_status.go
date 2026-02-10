@@ -9,6 +9,8 @@
 
 package model
 
+import "fmt"
+
 type TaskResultStatus string
 
 const (
@@ -16,4 +18,29 @@ const (
 	FailedTask                  TaskResultStatus = "FAILED"
 	FailedWithTerminalErrorTask TaskResultStatus = "FAILED_WITH_TERMINAL_ERROR"
 	CompletedTask               TaskResultStatus = "COMPLETED"
+	ScheduledTask               TaskResultStatus = "SCHEDULED"
+	SkippedTask                 TaskResultStatus = "SKIPPED"
 )
+
+func (t TaskResultStatus) String() string {
+	return string(t)
+}
+
+func ParseTaskResultStatus(status string) (TaskResultStatus, error) {
+	switch status {
+	case string(InProgressTask):
+		return InProgressTask, nil
+	case string(FailedTask):
+		return FailedTask, nil
+	case string(FailedWithTerminalErrorTask):
+		return FailedWithTerminalErrorTask, nil
+	case string(CompletedTask):
+		return CompletedTask, nil
+	case string(ScheduledTask):
+		return ScheduledTask, nil
+	case string(SkippedTask):
+		return SkippedTask, nil
+	default:
+		return InProgressTask, fmt.Errorf("invalid task result status: %s", status)
+	}
+}

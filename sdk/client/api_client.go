@@ -30,14 +30,8 @@ import (
 	"time"
 
 	"github.com/conductor-sdk/conductor-go/sdk/authentication"
+	"github.com/conductor-sdk/conductor-go/sdk/log"
 	"github.com/conductor-sdk/conductor-go/sdk/settings"
-	"github.com/sirupsen/logrus"
-)
-
-const (
-	CONDUCTOR_AUTH_KEY    = "CONDUCTOR_AUTH_KEY"
-	CONDUCTOR_AUTH_SECRET = "CONDUCTOR_AUTH_SECRET"
-	CONDUCTOR_SERVER_URL  = "CONDUCTOR_SERVER_URL"
 )
 
 var (
@@ -45,79 +39,156 @@ var (
 	xmlCheck  = regexp.MustCompile("(?i:[application|text]/xml)")
 )
 
+// APIClient is the main client for the Conductor API.
 type APIClient struct {
 	httpRequester *HttpRequester
-	tokenManager  authentication.TokenManager
 }
 
+// NewAPIClient creates APIClient from AuthenticationSettings and HttpSettings.
 func NewAPIClient(
 	authenticationSettings *settings.AuthenticationSettings,
 	httpSettings *settings.HttpSettings,
+	opts ...settings.Option,
 ) *APIClient {
-	return newAPIClient(
-		authenticationSettings,
-		httpSettings,
-		nil,
-		nil,
-	)
-}
-func NewAPIClientFromEnv() *APIClient {
-	authenticationSettings := settings.NewAuthenticationSettings(os.Getenv(CONDUCTOR_AUTH_KEY), os.Getenv(CONDUCTOR_AUTH_SECRET))
-	httpSettings := settings.NewHttpSettings(os.Getenv(CONDUCTOR_SERVER_URL))
-	return NewAPIClient(authenticationSettings, httpSettings)
+	clientSettings := &settings.ClientSettings{
+		Authentication: authenticationSettings,
+		HTTP:           httpSettings,
+	}
+
+	clientSettings.ApplyOptions(opts...)
+
+	return newAPIClient(clientSettings, nil, nil)
 }
 
+// NewAPIClientFromSettings creates APIClient from ClientSettings.
+func NewAPIClientFromSettings(clientSettings *settings.ClientSettings, opts ...settings.Option) *APIClient {
+	clientSettings.ApplyOptions(opts...)
+	return newAPIClient(clientSettings, nil, nil)
+}
+
+// NewAPIClientFromEnv creates APIClient from environment variables.
+func NewAPIClientFromEnv(opts ...settings.Option) *APIClient {
+	clientSettings := settings.NewClientSettingsFromEnv(opts...)
+	return newAPIClient(clientSettings, nil, nil)
+}
+
+// Deprecated: Use settings.NewClientSettingsFromEnv.
+func NewAuthenticationSettingsFromEnv() *settings.AuthenticationSettings {
+	return settings.NewAuthenticationSettings(
+		os.Getenv(settings.EnvAuthKey),
+		os.Getenv(settings.EnvAuthSecret),
+	)
+}
+
+// Deprecated: Use settings.NewHttpSettingsFromEnv
+func NewHttpSettingsFromEnv() *settings.HttpSettings {
+	url := os.Getenv(settings.EnvServerURL)
+	if url == "" {
+		log.Error("Environment variable CONDUCTOR_SERVER_URL is not set")
+	}
+
+	return settings.NewHttpSettings(url)
+}
+
+// NewAPIClientWithTokenExpiration creates client with token expiration.
 func NewAPIClientWithTokenExpiration(
 	authenticationSettings *settings.AuthenticationSettings,
 	httpSettings *settings.HttpSettings,
 	tokenExpiration *authentication.TokenExpiration,
+	opts ...settings.Option,
 ) *APIClient {
+	clientSettings := &settings.ClientSettings{
+		Authentication: authenticationSettings,
+		HTTP:           httpSettings,
+	}
+
+	clientSettings.ApplyOptions(opts...)
+
 	return newAPIClient(
-		authenticationSettings,
-		httpSettings,
+		clientSettings,
 		tokenExpiration,
 		nil,
 	)
 }
 
+// NewAPIClientWithTokenManager creates client with token manager.
 func NewAPIClientWithTokenManager(
 	authenticationSettings *settings.AuthenticationSettings,
 	httpSettings *settings.HttpSettings,
 	tokenExpiration *authentication.TokenExpiration,
 	tokenManager authentication.TokenManager,
+	opts ...settings.Option,
 ) *APIClient {
+	clientSettings := &settings.ClientSettings{
+		Authentication: authenticationSettings,
+		HTTP:           httpSettings,
+	}
+
+	clientSettings.ApplyOptions(opts...)
+
 	return newAPIClient(
-		authenticationSettings,
-		httpSettings,
+		clientSettings,
 		tokenExpiration,
 		tokenManager,
 	)
 }
 
-func newAPIClient(authenticationSettings *settings.AuthenticationSettings, httpSettings *settings.HttpSettings, tokenExpiration *authentication.TokenExpiration, tokenManager authentication.TokenManager) *APIClient {
+func newAPIClient(
+	clientSettings *settings.ClientSettings,
+	tokenExpiration *authentication.TokenExpiration,
+	tokenManager authentication.TokenManager,
+) *APIClient {
+	// Extract settings components
+	httpSettings := clientSettings.GetHTTP()
 	if httpSettings == nil {
 		httpSettings = settings.NewHttpDefaultSettings()
 	}
+
+	// Use token settings from ClientSettings if not provided directly
+	if clientSettings.GetTokenExpiration() != nil {
+		// Convert interface to concrete type if needed
+		if te, ok := clientSettings.GetTokenExpiration().(*authentication.TokenExpiration); ok {
+			tokenExpiration = te
+		}
+	}
+	if clientSettings.GetTokenManager() != nil {
+		tokenManager = clientSettings.GetTokenManager()
+	}
+
+	// Log warning if self-signed certificate mode is enabled
+	tlsSettings := clientSettings.GetTLS()
+	if tlsSettings != nil && tlsSettings.AllowSelfSigned {
+		baseURL := httpSettings.BaseUrl
+		hasPins := len(tlsSettings.PinnedThumbprints) > 0
+		if hasPins {
+			log.Warn("TLS self-signed certificate mode is active with certificate pinning.",
+				"target_url", baseURL,
+				"pinned_thumbprints_count", len(tlsSettings.PinnedThumbprints))
+		} else {
+			log.Warn("TLS self-signed certificate mode is active WITHOUT certificate pinning. Any self-signed certificate will be trusted!",
+				"target_url", baseURL)
+		}
+	}
+
 	baseDialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
 	netTransport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
+		Proxy:               clientSettings.GetProxy().BuildProxyFunc(),
 		DialContext:         baseDialer.DialContext,
+		TLSClientConfig:     tlsSettings.BuildTLSConfig(),
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		DisableCompression:  false,
 	}
 	client := http.Client{
-		Transport:     netTransport,
-		CheckRedirect: nil,
-		Jar:           nil,
-		Timeout:       30 * time.Second,
+		Transport: netTransport,
+		Timeout:   httpSettings.Timeout,
 	}
 	return &APIClient{
 		httpRequester: NewHttpRequester(
-			authenticationSettings, httpSettings, &client, tokenExpiration, tokenManager,
+			clientSettings.GetAuthentication(), httpSettings, &client, tokenExpiration, tokenManager,
 		),
 	}
 }
@@ -128,6 +199,10 @@ func (c *APIClient) callAPI(request *http.Request) (*http.Response, error) {
 }
 
 func (c *APIClient) decode(v interface{}, b []byte, contentType string) (err error) {
+	if len(b) == 0 {
+		return nil
+	}
+
 	if strings.Contains(contentType, "application/xml") {
 		if err = xml.Unmarshal(b, v); err != nil {
 			return err
@@ -135,6 +210,13 @@ func (c *APIClient) decode(v interface{}, b []byte, contentType string) (err err
 		return nil
 	} else if strings.Contains(contentType, "application/json") {
 		if err = json.Unmarshal(b, v); err != nil {
+			// Hacky - if json unmarshalling fails, return a string.
+			// it's because the backend might reply with content-type: application/json and a string.
+			rv := reflect.ValueOf(v)
+			if rv.Kind() == reflect.Ptr && rv.Elem().Kind() == reflect.String {
+				rv.Elem().SetString(string(b))
+				return nil
+			}
 			return err
 		}
 		return nil
@@ -146,6 +228,7 @@ func (c *APIClient) decode(v interface{}, b []byte, contentType string) (err err
 		rv.Elem().SetString(string(b))
 		return nil
 	}
+
 	return errors.New("undefined response type")
 }
 
@@ -213,36 +296,6 @@ func CacheExpires(r *http.Response) time.Time {
 	return expires
 }
 
-func selectHeaderContentType(contentTypes []string) string {
-	if len(contentTypes) == 0 {
-		return ""
-	}
-	if contains(contentTypes, "application/json") {
-		return "application/json"
-	}
-	return contentTypes[0] // use the first content type specified in 'consumes'
-}
-
-// selectHeaderAccept join all accept types and return
-func selectHeaderAccept(accepts []string) string {
-	if len(accepts) == 0 {
-		return ""
-	}
-	if contains(accepts, "application/json") {
-		return "application/json"
-	}
-	return strings.Join(accepts, ",")
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, a := range haystack {
-		if strings.EqualFold(a, needle) {
-			return true
-		}
-	}
-	return false
-}
-
 func parameterToString(obj interface{}, collectionFormat string) string {
 	var delimiter string
 
@@ -265,9 +318,8 @@ func parameterToString(obj interface{}, collectionFormat string) string {
 }
 
 func setBody(body interface{}, contentType string) (bodyBuf *bytes.Buffer, err error) {
-	if bodyBuf == nil {
-		bodyBuf = &bytes.Buffer{}
-	}
+	bodyBuf = &bytes.Buffer{}
+
 	if reader, ok := body.(io.Reader); ok {
 		_, err = bodyBuf.ReadFrom(reader)
 	} else if b, ok := body.([]byte); ok {
@@ -279,7 +331,7 @@ func setBody(body interface{}, contentType string) (bodyBuf *bytes.Buffer, err e
 	} else if jsonCheck.MatchString(contentType) {
 		err = json.NewEncoder(bodyBuf).Encode(body)
 	} else if xmlCheck.MatchString(contentType) {
-		xml.NewEncoder(bodyBuf).Encode(body)
+		err = xml.NewEncoder(bodyBuf).Encode(body)
 	}
 
 	if err != nil {
@@ -321,7 +373,7 @@ func getDecompressedBody(response *http.Response) ([]byte, error) {
 	case "gzip":
 		reader, err = gzip.NewReader(response.Body)
 		if err != nil {
-			logrus.Error("Unable to decompress the response ", err.Error())
+			log.Error("Unable to decompress the response", "error", err)
 			if err == io.EOF {
 				return nil, nil
 			}
@@ -348,4 +400,107 @@ func addFile(w *multipart.Writer, fieldName, path string) error {
 	_, err = io.Copy(part, file)
 
 	return err
+}
+
+func isSuccessfulStatus(statusCode int) bool {
+	return statusCode >= 200 && statusCode < 300
+}
+
+// executeCall performs an HTTP request with centralized error handling
+// Supports all CRUD operations through a common interface
+func (c *APIClient) executeCall(ctx context.Context, method, path string, queryParams url.Values, body interface{}, contentType string, result interface{}) (*http.Response, error) {
+	// Create headers
+	headers := make(map[string]string)
+
+	// Set content type if body is provided
+	if body != nil {
+		cType := "application/json"
+		if len(contentType) > 0 && contentType != "" {
+			cType = contentType
+		}
+		headers["Content-Type"] = cType
+	}
+
+	// Set accept header for all requests
+	headers["Accept"] = "application/json"
+
+	// Prepare the request
+	req, err := c.prepareRequest(ctx, path, method, body, headers, queryParams, nil, "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Call the API
+	resp, err := c.callAPI(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+
+	// Get response body
+	respBody, err := getDecompressedBody(resp)
+	if err != nil {
+		return resp, err
+	}
+
+	// Handle successful response
+	if isSuccessfulStatus(resp.StatusCode) {
+		if result != nil && len(respBody) > 0 {
+			err = c.decode(result, respBody, resp.Header.Get("Content-Type"))
+		}
+		return resp, err
+	}
+
+	// Handle error response - create GenericSwaggerError with status code
+	newErr := NewGenericSwaggerError(respBody, string(respBody), nil, resp.StatusCode)
+	return resp, newErr
+}
+
+// Get performs a GET request
+func (c *APIClient) Get(ctx context.Context, path string, queryParams url.Values, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "GET", path, queryParams, nil, "", result)
+}
+
+// Post performs a POST request
+func (c *APIClient) Post(ctx context.Context, path string, body interface{}, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "POST", path, nil, body, "", result)
+}
+
+// PostWithContentType performs post with given content type
+func (c *APIClient) PostWithContentType(ctx context.Context, path string, body interface{}, contentType string, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "POST", path, nil, body, contentType, result)
+}
+
+// PostWithParams performs a POST request with query parameters
+func (c *APIClient) PostWithParams(ctx context.Context, path string, queryParams url.Values, body interface{}, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "POST", path, queryParams, body, "", result)
+}
+
+// Put performs a PUT request
+func (c *APIClient) Put(ctx context.Context, path string, body interface{}, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "PUT", path, nil, body, "", result)
+}
+
+// PutWithContentType performs a PUT request
+func (c *APIClient) PutWithContentType(ctx context.Context, path string, body interface{}, contentType string, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "PUT", path, nil, body, contentType, result)
+}
+
+// PutWithParams performs a PUT request with query parameters
+func (c *APIClient) PutWithParams(ctx context.Context, path string, queryParams url.Values, body interface{}, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "PUT", path, queryParams, body, "", result)
+}
+
+// Delete performs a DELETE request without a body
+func (c *APIClient) Delete(ctx context.Context, path string, queryParams url.Values, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "DELETE", path, queryParams, nil, "", result)
+}
+
+// DeleteWithBody performs a DELETE request with a body
+func (c *APIClient) DeleteWithBody(ctx context.Context, path string, body interface{}, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "DELETE", path, nil, body, "", result)
+}
+
+// Patch performs a PATCH request
+func (c *APIClient) Patch(ctx context.Context, path string, body interface{}, result interface{}) (*http.Response, error) {
+	return c.executeCall(ctx, "PATCH", path, nil, body, "", result)
 }
